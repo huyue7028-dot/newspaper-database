@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>四大报刊数据库</title>
+<style>
+:root {
+  --bg: #f5f6fa;
+  --surface: #ffffff;
+  --ink: #1a1a2e;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent2: #7c3aed;
+  --border: #e2e8f0;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+/* Loading Screen */
+#loadingScreen {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  color: white;
+}
+#loadingScreen .spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 1.5rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#loadingScreen h2 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+#loadingScreen p { font-size: 0.9rem; opacity: 0.85; }
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  color: white;
+  padding: 1.5rem 1.5rem;
+  text-align: center;
+}
+.header h1 { font-size: 1.7rem; margin-bottom: 0.3rem; }
+.header .subtitle { font-size: 0.9rem; opacity: 0.9; }
+.stats-bar {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  margin-top: 0.8rem;
+  flex-wrap: wrap;
+}
+.stat-item { text-align: center; }
+.stat-item .num { font-size: 1.6rem; font-weight: 700; }
+.stat-item .label { font-size: 0.78rem; opacity: 0.85; }
+
+/* Container */
+.container { max-width: 1400px; margin: 0 auto; padding: 1rem; }
+
+/* Controls */
+.controls {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.search-row {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.search-box {
+  flex: 1;
+  min-width: 250px;
+  position: relative;
+}
+.search-box input {
+  width: 100%;
+  padding: 0.6rem 0.6rem 0.6rem 2.3rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  transition: border-color 0.2s;
+}
+.search-box input:focus { outline: none; border-color: var(--accent); }
+.search-box::before {
+  content: '\1F50D';
+  position: absolute;
+  left: 0.7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem;
+}
+.filter-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.filter-row select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  background: var(--surface);
+  cursor: pointer;
+  min-width: 110px;
+}
+.filter-row select:focus { outline: none; border-color: var(--accent); }
+.btn {
+  padding: 0.45rem 0.9rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: #1d4ed8; }
+.btn-reset { background: var(--border); color: var(--ink); }
+.btn-reset:hover { background: #cbd5e1; }
+.btn-theme {
+  background: linear-gradient(135deg, var(--accent2), #9333ea);
+  color: white;
+}
+.btn-theme:hover { opacity: 0.9; }
+
+/* Custom Theme Panel */
+.theme-panel {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  display: none;
+}
+.theme-panel.active { display: block; }
+.theme-panel h3 {
+  font-size: 0.95rem;
+  margin-bottom: 0.6rem;
+  color: var(--ink);
+}
+.theme-create-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.theme-create-row input[type="text"] {
+  flex: 1;
+  min-width: 150px;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.theme-create-row input[type="color"] {
+  width: 40px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.theme-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.theme-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.theme-chip:hover { opacity: 0.85; }
+.theme-chip .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.theme-chip .count {
+  background: rgba(0,0,0,0.1);
+  padding: 0 0.4rem;
+  border-radius: 10px;
+  font-size: 0.72rem;
+}
+.theme-chip .delete {
+  margin-left: 0.2rem;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 0.9rem;
+}
+.theme-chip .delete:hover { opacity: 1; color: var(--danger); }
+.theme-empty { color: var(--muted); font-size: 0.82rem; padding: 0.5rem 0; }
+
+/* Results Info */
+.results-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* Table */
+.table-container {
+  background: var(--surface);
+  border-radius: 12px;
+  overflow: auto;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  max-height: 65vh;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+thead {
+  background: #f1f5f9;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+th {
+  padding: 0.6rem 0.7rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+th:hover { background: #e2e8f0; }
+th.sorted-asc::after { content: ' \2191'; color: var(--accent); }
+th.sorted-desc::after { content: ' \2193'; color: var(--accent); }
+td {
+  padding: 0.5rem 0.7rem;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+tbody tr { transition: background 0.15s; }
+tbody tr:hover { background: #f8fafc; }
+.title-cell {
+  max-width: 320px;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 500;
+}
+.title-cell:hover { text-decoration: underline; }
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  margin: 0.05rem;
+}
+.tag-country { background: #fef3c7; color: #92400e; }
+.tag-theme { background: #ddd6fe; color: #5b21b6; }
+.tag-section { background: #d1fae5; color: #065f46; }
+.tag-np {
+  background: #dbeafe;
+  color: #1e40af;
+  font-weight: 500;
+}
+.tag-custom {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  margin: 0.05rem;
+  color: white;
+}
+.status-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+.status-collected { background: #d1fae5; color: #065f46; }
+.status-paywall { background: #fef3c7; color: #92400e; }
+.newspaper-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.np-ipw { background: #dbeafe; color: #1e40af; }
+.np-cbbr { background: #fce7f3; color: #9f1239; }
+.np-chinaxwcb { background: #d1fae5; color: #065f46; }
+.np-zhdsb { background: #fef3c7; color: #92400e; }
+.np-wyb { background: #e9d5ff; color: #6b21a8; }
+
+/* Pagination */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+}
+.pagination button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.pagination button:hover { background: var(--bg); }
+.pagination button.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+.page-size-select {
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+}
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--surface);
+  border-radius: 12px;
+  max-width: 700px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 1.5rem;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.8rem;
+}
+.modal-header h2 { font-size: 1.15rem; flex: 1; padding-right: 1rem; line-height: 1.4; }
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.modal-close:hover { background: var(--bg); }
+.modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.8rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.modal-meta span {
+  background: var(--bg);
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+}
+.modal-summary {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 0.8rem;
+  margin-bottom: 0.8rem;
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+.modal-tags { margin-bottom: 0.8rem; }
+.modal-tags .tag { margin: 0.1rem; }
+.modal-link {
+  display: inline-block;
+  padding: 0.4rem 0.9rem;
+  background: var(--accent);
+  color: white;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 0.82rem;
+}
+.modal-link:hover { background: #1d4ed8; }
+
+/* Custom Theme in Modal */
+.modal-custom-themes {
+  margin-top: 0.8rem;
+  padding: 0.8rem;
+  background: #faf5ff;
+  border-radius: 8px;
+  border: 1px dashed var(--accent2);
+}
+.modal-custom-themes h4 {
+  font-size: 0.88rem;
+  margin-bottom: 0.5rem;
+  color: var(--accent2);
+}
+.custom-theme-checkboxs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.custom-theme-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+}
+.custom-theme-tag.assigned {
+  border-color: currentColor;
+}
+.custom-theme-tag .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.custom-theme-empty { color: var(--muted); font-size: 0.8rem; }
+
+/* Charts */
+.charts-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+@media (max-width: 768px) {
+  .charts-section { grid-template-columns: 1fr; }
+}
+.chart-card {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 0.8rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.chart-card h3 { font-size: 0.9rem; margin-bottom: 0.6rem; color: var(--ink); }
+.chart-bars { display: flex; flex-direction: column; gap: 0.25rem; }
+.chart-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+.chart-bar-label {
+  min-width: 80px;
+  text-align: right;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chart-bar-track {
+  flex: 1;
+  height: 18px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.chart-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.chart-bar-value {
+  min-width: 35px;
+  font-weight: 600;
+}
+
+/* Export Button */
+.export-btn {
+  background: var(--success);
+  color: white;
+  padding: 0.4rem 0.8rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.export-btn:hover { background: #059669; }
+</style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loadingScreen">
+  <div class="spinner"></div>
+  <h2>正在加载四大报刊数据库</h2>
+  <p>数据量较大，请稍候...</p>
+</div>
+
+<!-- Header -->
+<div class="header">
+  <h1>四大报刊数据库</h1>
+  <div class="subtitle">国际出版周报 | 中国新闻出版广电报 | 中华读书报 | 文艺报</div>
+  <div class="stats-bar" id="statsBar">
+    <div class="stat-item"><div class="num" id="statTotal">-</div><div class="label">总文章数</div></div>
+    <div class="stat-item"><div class="num" id="statNP">4</div><div class="label">报刊数</div></div>
+    <div class="stat-item"><div class="num" id="statDateRange">-</div><div class="label">时间跨度</div></div>
+    <div class="stat-item"><div class="num" id="statThemes">-</div><div class="label">自定义主题</div></div>
+  </div>
+</div>
+
+<div style="background:#e0f2fe;border:1px solid #bae6fd;border-radius:8px;padding:0.6rem 1rem;margin:0.5rem 1rem;font-size:0.82rem;color:#075985;">
+  <strong>自动更新提示：</strong>本数据库包含2021年至今的文章数据。运行 <code style="background:#f0f9ff;padding:2px 6px;border-radius:4px;">python3 报刊数据库自动更新脚本.py</code> 可同步最新报刊内容。
+</div>
+
+<div class="container">
+  <!-- Controls -->
+  <div class="controls">
+    <div class="search-row">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="搜索标题、作者、摘要、版面...">
+      </div>
+      <button class="btn btn-theme" onclick="toggleThemePanel()">自定义主题管理</button>
+      <button class="btn btn-reset" onclick="resetFilters()">重置筛选</button>
+    </div>
+    <div class="filter-row">
+      <select id="filterNewspaper"><option value="">全部报刊</option></select>
+      <select id="filterDate"><option value="">全部日期</option></select>
+      <select id="filterSection"><option value="">全部版面</option></select>
+      <select id="filterCountry"><option value="">全部国家</option></select>
+      <select id="filterTheme"><option value="">全部主题</option></select>
+      <select id="filterCustomTheme"><option value="">自定义主题</option></select>
+      <select id="filterStatus"><option value="">全部状态</option></select>
+      <select class="page-size-select" id="pageSizeSelect">
+        <option value="25">25条/页</option>
+        <option value="50" selected>50条/页</option>
+        <option value="100">100条/页</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Custom Theme Panel -->
+  <div class="theme-panel" id="themePanel">
+    <h3>自定义主题管理</h3>
+    <div class="theme-create-row">
+      <input type="text" id="newThemeName" placeholder="输入新主题名称（如：AI与出版、版权贸易研究...）" maxlength="30">
+      <input type="color" id="newThemeColor" value="#FF6B6B">
+      <button class="btn btn-primary" onclick="createTheme()">创建主题</button>
+    </div>
+    <div class="theme-list" id="themeList">
+      <div class="theme-empty">暂无自定义主题，请在上方创建</div>
+    </div>
+    <div style="margin-top:0.5rem;font-size:0.78rem;color:var(--muted);">
+      提示：在文章详情页中可将文章分配到自定义主题；所有数据保存在浏览器本地
+    </div>
+  </div>
+
+  <!-- Results Info -->
+  <div class="results-info">
+    <span id="resultsCount">加载中...</span>
+    <button class="export-btn" onclick="exportFiltered()">导出当前结果</button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-container">
+    <table id="dataTable">
+      <thead>
+        <tr>
+          <th onclick="sortBy('title')">标题</th>
+          <th onclick="sortBy('date')">日期</th>
+          <th onclick="sortBy('section')">版面</th>
+          <th onclick="sortBy('author')">作者</th>
+          <th>涉及国家</th>
+          <th>主题分类</th>
+          <th>自定义</th>
+          <th onclick="sortBy('newspaper')">报刊</th>
+          <th>状态</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div class="pagination" id="pagination"></div>
+
+  <!-- Charts -->
+  <div class="charts-section" id="chartsSection">
+    <div class="chart-card">
+      <h3>报刊分布</h3>
+      <div class="chart-bars" id="chartNewspaper"></div>
+    </div>
+    <div class="chart-card">
+      <h3>主题分布 (Top 15)</h3>
+      <div class="chart-bars" id="chartTheme"></div>
+    </div>
+    <div class="chart-card">
+      <h3>涉及国家 (Top 15)</h3>
+      <div class="chart-bars" id="chartCountry"></div>
+    </div>
+    <div class="chart-card">
+      <h3>年度分布</h3>
+      <div class="chart-bars" id="chartYear"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2 id="modalTitle"></h2>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-meta" id="modalMeta"></div>
+    <div class="modal-summary" id="modalSummary"></div>
+    <div class="modal-tags" id="modalTags"></div>
+    <div class="modal-custom-themes" id="modalCustomThemes">
+      <h4>分配到自定义主题</h4>
+      <div class="custom-theme-checkboxs" id="customThemeCheckboxes"></div>
+    </div>
+    <div style="margin-top:0.8rem;">
+      <a id="modalLink" href="#" target="_blank" class="modal-link">查看原文 &rarr;</a>
+    </div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script>
+// ============ Data Loading ============
+const IDX = { title:0, url:1, date:2, section:3, author:4, summary:5, countries:6, themes:7, content_length:8, status:9, newspaper:10 };
+const NP_CLASS = {
+  '国际出版周报': 'np-ipw',
+  '中国新闻出版广电报': 'np-chinaxwcb',
+  '中华读书报': 'np-zhdsb',
+  '文艺报': 'np-wyb'
+};
+const NP_COLORS = {
+  '国际出版周报': '#3b82f6',
+  '中国新闻出版广电报': '#10b981',
+  '中华读书报': '#f59e0b',
+  '文艺报': '#8b5cf6'
+};
+
+let filteredIdx = [];  // Array of indices into ARTICLES
+let currentPage = 1;
+let pageSize = 50;
+let sortField = 'date';
+let sortDir = 'desc';
+let currentArticleIdx = -1;
+let searchTimeout = null;
+
+// ============ Custom Theme Storage ============
+function loadCustomThemes() {
+  try { return JSON.parse(localStorage.getItem('4np_customThemes') || '[]'); }
+  catch(e) { return []; }
+}
+function saveCustomThemes(themes) {
+  localStorage.setItem('4np_customThemes', JSON.stringify(themes));
+}
+function loadArticleThemes() {
+  try { return JSON.parse(localStorage.getItem('4np_articleThemes') || '{}'); }
+  catch(e) { return {}; }
+}
+function saveArticleThemes(mapping) {
+  localStorage.setItem('4np_articleThemes', JSON.stringify(mapping));
+}
+let customThemes = loadCustomThemes();
+let articleThemes = loadArticleThemes();
+
+// ============ Initialization ============
+function init() {
+  // Hide loading screen
+  document.getElementById('loadingScreen').style.display = 'none';
+
+  // Update stats
+  document.getElementById('statTotal').textContent = ARTICLES.length.toLocaleString();
+  const dates = ARTICLES.map(a => a[IDX.date]).filter(Boolean).sort();
+  if (dates.length > 0) {
+    document.getElementById('statDateRange').textContent = dates[0].slice(0,4) + '-' + dates[dates.length-1].slice(0,4);
+  }
+  document.getElementById('statThemes').textContent = customThemes.length;
+
+  // Initialize filters
+  initFilters();
+
+  // Initialize page size
+  pageSize = parseInt(document.getElementById('pageSizeSelect').value);
+
+  // Apply initial filter
+  applyFilters();
+
+  // Render theme panel
+  renderThemePanel();
+
+  // Listen for filter changes
+  ['filterNewspaper','filterDate','filterSection','filterCountry','filterTheme','filterCustomTheme','filterStatus'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyFilters);
+  });
+  // Debounce search input for performance with large dataset
+  document.getElementById('searchInput').addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(applyFilters, 300);
+  });
+  document.getElementById('pageSizeSelect').addEventListener('change', () => {
+    pageSize = parseInt(document.getElementById('pageSizeSelect').value);
+    currentPage = 1;
+    renderTable();
+  });
+}
+
+function initFilters() {
+  const newspapers = [...new Set(ARTICLES.map(a => a[IDX.newspaper]).filter(Boolean))].sort();
+  const dates = [...new Set(ARTICLES.map(a => (a[IDX.date] || '').slice(0,7)).filter(Boolean))].sort().reverse();
+  const statuses = [...new Set(ARTICLES.map(a => a[IDX.status]).filter(Boolean))].sort();
+
+  // Count sections/countries/themes to limit dropdown size
+  const sectionCounts = {};
+  const countryCounts = {};
+  const themeCounts = {};
+  ARTICLES.forEach(a => {
+    const s = a[IDX.section]; if (s) sectionCounts[s] = (sectionCounts[s] || 0) + 1;
+    (a[IDX.countries] || '').split(';').filter(Boolean).forEach(c => { countryCounts[c] = (countryCounts[c] || 0) + 1; });
+    (a[IDX.themes] || '').split(';').filter(Boolean).forEach(t => { themeCounts[t] = (themeCounts[t] || 0) + 1; });
+  });
+
+  // Limit to top 200 by count for sections, all for countries/themes (usually manageable)
+  const sections = Object.entries(sectionCounts).sort((a,b) => b[1]-a[1]).slice(0, 200).map(e => e[0]).sort();
+  const countries = Object.keys(countryCounts).sort();
+  const themes = Object.keys(themeCounts).sort();
+
+  const fillSelect = (id, items, allLabel) => {
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = `<option value="">${allLabel}</option>` + items.map(i => `<option value="${escapeHtml(i)}">${escapeHtml(i)}</option>`).join('');
+    sel.value = current;
+  };
+
+  fillSelect('filterNewspaper', newspapers, '全部报刊');
+  fillSelect('filterDate', dates, '全部日期');
+  fillSelect('filterSection', sections, '全部版面');
+  fillSelect('filterCountry', countries, '全部国家');
+  fillSelect('filterTheme', themes, '全部主题');
+  fillSelect('filterStatus', statuses, '全部状态');
+  updateCustomThemeFilter();
+}
+
+function updateCustomThemeFilter() {
+  const sel = document.getElementById('filterCustomTheme');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">自定义主题</option>' +
+    customThemes.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  sel.value = current;
+}
+
+// ============ Filtering ============
+function applyFilters() {
+  const search = document.getElementById('searchInput').value.toLowerCase().trim();
+  const fNP = document.getElementById('filterNewspaper').value;
+  const fDate = document.getElementById('filterDate').value;
+  const fSection = document.getElementById('filterSection').value;
+  const fCountry = document.getElementById('filterCountry').value;
+  const fTheme = document.getElementById('filterTheme').value;
+  const fCustomTheme = document.getElementById('filterCustomTheme').value;
+  const fStatus = document.getElementById('filterStatus').value;
+
+  filteredIdx = [];
+  for (let i = 0; i < ARTICLES.length; i++) {
+    const a = ARTICLES[i];
+    if (search) {
+      const text = (a[IDX.title] + ' ' + a[IDX.author] + ' ' + a[IDX.summary] + ' ' + a[IDX.section]).toLowerCase();
+      if (!text.includes(search)) continue;
+    }
+    if (fNP && a[IDX.newspaper] !== fNP) continue;
+    if (fDate && !(a[IDX.date] || '').startsWith(fDate)) continue;
+    if (fSection && a[IDX.section] !== fSection) continue;
+    if (fCountry && !(a[IDX.countries] || '').split(';').includes(fCountry)) continue;
+    if (fTheme && !(a[IDX.themes] || '').split(';').includes(fTheme)) continue;
+    if (fStatus && a[IDX.status] !== fStatus) continue;
+    if (fCustomTheme) {
+      const url = a[IDX.url];
+      const assigned = articleThemes[url] || [];
+      if (!assigned.includes(fCustomTheme)) continue;
+    }
+    filteredIdx.push(i);
+  }
+
+  currentPage = 1;
+  sortData();
+  renderTable();
+  renderCharts();
+}
+
+function resetFilters() {
+  document.getElementById('searchInput').value = '';
+  ['filterNewspaper','filterDate','filterSection','filterCountry','filterTheme','filterCustomTheme','filterStatus'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  sortField = 'date';
+  sortDir = 'desc';
+  updateSortIndicators();
+  applyFilters();
+}
+
+// ============ Sorting ============
+function sortBy(field) {
+  if (sortField === field) {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortField = field;
+    sortDir = 'asc';
+  }
+  updateSortIndicators();
+  sortData();
+  renderTable();
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll('th').forEach(th => {
+    th.classList.remove('sorted-asc', 'sorted-desc');
+  });
+  const thMap = { title:0, date:1, section:2, author:3, newspaper:7 };
+  const idx = thMap[sortField];
+  if (idx !== undefined) {
+    const th = document.querySelectorAll('th')[idx];
+    if (th) th.classList.add(sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+  }
+}
+
+function sortData() {
+  const fieldIdx = IDX[sortField];
+  filteredIdx.sort((i, j) => {
+    let va = ARTICLES[i][fieldIdx] || '';
+    let vb = ARTICLES[j][fieldIdx] || '';
+    if (typeof va === 'number') {
+      return sortDir === 'asc' ? va - vb : vb - va;
+    }
+    return sortDir === 'asc' ? String(va).localeCompare(String(vb), 'zh') : String(vb).localeCompare(String(va), 'zh');
+  });
+}
+
+// ============ Table Rendering ============
+function renderTable() {
+  const total = filteredIdx.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+  if (currentPage > totalPages) currentPage = totalPages;
+
+  const start = (currentPage - 1) * pageSize;
+  const end = Math.min(start + pageSize, total);
+  const pageIndices = filteredIdx.slice(start, end);
+
+  const tbody = document.getElementById('tableBody');
+  const parts = [];
+  for (let p = 0; p < pageIndices.length; p++) {
+    const idx = pageIndices[p];
+    const article = ARTICLES[idx];
+    const url = article[IDX.url];
+    const assignedThemes = articleThemes[url] || [];
+    let customTags = '';
+    for (const tid of assignedThemes) {
+      const theme = customThemes.find(t => t.id === tid);
+      if (theme) customTags += `<span class="tag-custom" style="background:${theme.color}">${escapeHtml(theme.name)}</span>`;
+    }
+
+    const countries = (article[IDX.countries] || '').split(';').filter(Boolean).slice(0, 3)
+      .map(c => `<span class="tag tag-country">${escapeHtml(c)}</span>`).join('');
+    const themes = (article[IDX.themes] || '').split(';').filter(Boolean).slice(0, 3)
+      .map(t => `<span class="tag tag-theme">${escapeHtml(t)}</span>`).join('');
+    const np = article[IDX.newspaper] || '';
+    const npClass = NP_CLASS[np] || 'np-ipw';
+    const st = article[IDX.status] || '';
+    const stClass = st.includes('付费') ? 'status-paywall' : 'status-collected';
+
+    parts.push(`<tr>
+      <td class="title-cell" onclick="showDetail(${idx})">${escapeHtml(article[IDX.title] || '')}</td>
+      <td>${escapeHtml(article[IDX.date] || '')}</td>
+      <td>${escapeHtml(article[IDX.section] || '')}</td>
+      <td>${escapeHtml(article[IDX.author] || '')}</td>
+      <td>${countries}</td>
+      <td>${themes}</td>
+      <td>${customTags}</td>
+      <td><span class="newspaper-badge ${npClass}">${escapeHtml(np)}</span></td>
+      <td><span class="status-badge ${stClass}">${escapeHtml(st)}</span></td>
+    </tr>`);
+  }
+  tbody.innerHTML = parts.join('');
+
+  document.getElementById('resultsCount').textContent =
+    `共 ${total.toLocaleString()} 篇文章，显示第 ${start + 1}-${end} 篇（第 ${currentPage}/${totalPages} 页）`;
+
+  renderPagination(totalPages);
+}
+
+function renderPagination(totalPages) {
+  const pag = document.getElementById('pagination');
+  let html = '';
+  html += `<button onclick="goPage(1)" ${currentPage === 1 ? 'disabled' : ''}>首页</button>`;
+  html += `<button onclick="goPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>上一页</button>`;
+
+  const maxButtons = 7;
+  let startP = Math.max(1, currentPage - 3);
+  let endP = Math.min(totalPages, startP + maxButtons - 1);
+  if (endP - startP < maxButtons - 1) startP = Math.max(1, endP - maxButtons + 1);
+
+  if (startP > 1) html += '<button disabled>...</button>';
+  for (let i = startP; i <= endP; i++) {
+    html += `<button onclick="goPage(${i})" class="${i === currentPage ? 'active' : ''}">${i}</button>`;
+  }
+  if (endP < totalPages) html += '<button disabled>...</button>';
+
+  html += `<button onclick="goPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>下一页</button>`;
+  html += `<button onclick="goPage(${totalPages})" ${currentPage === totalPages ? 'disabled' : ''}>末页</button>`;
+  pag.innerHTML = html;
+}
+
+function goPage(page) {
+  currentPage = page;
+  renderTable();
+  document.querySelector('.table-container').scrollTop = 0;
+}
+
+// ============ Detail Modal ============
+function showDetail(globalIdx) {
+  currentArticleIdx = globalIdx;
+  const a = ARTICLES[globalIdx];
+  if (!a) return;
+
+  document.getElementById('modalTitle').textContent = a[IDX.title] || '';
+  document.getElementById('modalMeta').innerHTML = [
+    a[IDX.date] ? `<span>📅 ${escapeHtml(a[IDX.date])}</span>` : '',
+    a[IDX.section] ? `<span>📰 ${escapeHtml(a[IDX.section])}</span>` : '',
+    a[IDX.author] ? `<span>✍ ${escapeHtml(a[IDX.author])}</span>` : '',
+    a[IDX.newspaper] ? `<span>📋 ${escapeHtml(a[IDX.newspaper])}</span>` : '',
+    a[IDX.content_length] ? `<span>📝 ${a[IDX.content_length].toLocaleString()} 字</span>` : '',
+    a[IDX.status] ? `<span>${escapeHtml(a[IDX.status])}</span>` : '',
+  ].join('');
+
+  document.getElementById('modalSummary').textContent = a[IDX.summary] || '（无摘要）';
+
+  // Tags
+  const tagsHtml = [];
+  (a[IDX.countries] || '').split(';').filter(Boolean).forEach(c => {
+    tagsHtml.push(`<span class="tag tag-country">${escapeHtml(c)}</span>`);
+  });
+  (a[IDX.themes] || '').split(';').filter(Boolean).forEach(t => {
+    tagsHtml.push(`<span class="tag tag-theme">${escapeHtml(t)}</span>`);
+  });
+  document.getElementById('modalTags').innerHTML = tagsHtml.join('') || '<span style="color:var(--muted);font-size:0.82rem;">无标签</span>';
+
+  // Link
+  const link = document.getElementById('modalLink');
+  link.href = a[IDX.url] || '#';
+
+  // Custom themes
+  renderCustomThemeCheckboxes(a[IDX.url]);
+
+  document.getElementById('modalOverlay').classList.add('active');
+}
+
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modalOverlay')) return;
+  document.getElementById('modalOverlay').classList.remove('active');
+  currentArticleIdx = -1;
+}
+
+function renderCustomThemeCheckboxes(url) {
+  const container = document.getElementById('customThemeCheckboxes');
+  const assigned = articleThemes[url] || [];
+
+  if (customThemes.length === 0) {
+    container.innerHTML = '<div class="custom-theme-empty">暂无自定义主题，请先在"自定义主题管理"中创建</div>';
+    return;
+  }
+
+  container.innerHTML = customThemes.map(t => {
+    const isAssigned = assigned.includes(t.id);
+    return `<div class="custom-theme-tag ${isAssigned ? 'assigned' : ''}"
+      style="color:${t.color};background:${isAssigned ? t.color + '22' : 'transparent'};"
+      onclick="toggleArticleTheme('${escapeHtml(url)}','${t.id}')">
+      <span class="dot" style="background:${t.color}"></span>
+      ${escapeHtml(t.name)}
+      ${isAssigned ? ' ✓' : ''}
+    </div>`;
+  }).join('');
+}
+
+function toggleArticleTheme(url, themeId) {
+  if (!articleThemes[url]) articleThemes[url] = [];
+  const idx = articleThemes[url].indexOf(themeId);
+  if (idx >= 0) {
+    articleThemes[url].splice(idx, 1);
+  } else {
+    articleThemes[url].push(themeId);
+  }
+  saveArticleThemes(articleThemes);
+  renderCustomThemeCheckboxes(url);
+  renderThemePanel();
+  renderTable();
+}
+
+// ============ Custom Theme Management ============
+function toggleThemePanel() {
+  document.getElementById('themePanel').classList.toggle('active');
+}
+
+function createTheme() {
+  const name = document.getElementById('newThemeName').value.trim();
+  const color = document.getElementById('newThemeColor').value;
+  if (!name) { alert('请输入主题名称'); return; }
+  if (customThemes.some(t => t.name === name)) { alert('该主题名称已存在'); return; }
+
+  const theme = { id: 'theme_' + Date.now(), name: name, color: color };
+  customThemes.push(theme);
+  saveCustomThemes(customThemes);
+  document.getElementById('newThemeName').value = '';
+  renderThemePanel();
+  updateCustomThemeFilter();
+  document.getElementById('statThemes').textContent = customThemes.length;
+  if (currentArticleIdx >= 0) {
+    renderCustomThemeCheckboxes(ARTICLES[currentArticleIdx][IDX.url]);
+  }
+}
+
+function deleteTheme(themeId) {
+  if (!confirm('确定删除该自定义主题？已分配的文章关联也将清除。')) return;
+  customThemes = customThemes.filter(t => t.id !== themeId);
+  // Remove from all articles
+  Object.keys(articleThemes).forEach(url => {
+    articleThemes[url] = articleThemes[url].filter(id => id !== themeId);
+    if (articleThemes[url].length === 0) delete articleThemes[url];
+  });
+  saveCustomThemes(customThemes);
+  saveArticleThemes(articleThemes);
+  renderThemePanel();
+  updateCustomThemeFilter();
+  document.getElementById('statThemes').textContent = customThemes.length;
+  if (currentArticleIdx >= 0) {
+    renderCustomThemeCheckboxes(ARTICLES[currentArticleIdx][IDX.url]);
+  }
+  applyFilters();
+}
+
+function renderThemePanel() {
+  const container = document.getElementById('themeList');
+  if (customThemes.length === 0) {
+    container.innerHTML = '<div class="theme-empty">暂无自定义主题，请在上方创建</div>';
+    return;
+  }
+
+  container.innerHTML = customThemes.map(t => {
+    const count = Object.values(articleThemes).filter(arr => arr.includes(t.id)).length;
+    return `<div class="theme-chip" style="background:${t.color}22;border:1px solid ${t.color};">
+      <span class="dot" style="background:${t.color}"></span>
+      <span style="color:${t.color};font-weight:500;">${escapeHtml(t.name)}</span>
+      <span class="count">${count}篇</span>
+      <span class="delete" onclick="deleteTheme('${t.id}')">&times;</span>
+    </div>`;
+  }).join('');
+}
+
+// ============ Charts ============
+function renderCharts() {
+  const npCounts = {};
+  const themeCounts = {};
+  const countryCounts = {};
+  const yearCounts = {};
+
+  for (let i = 0; i < filteredIdx.length; i++) {
+    const a = ARTICLES[filteredIdx[i]];
+    const np = a[IDX.newspaper] || '未知';
+    npCounts[np] = (npCounts[np] || 0) + 1;
+    (a[IDX.themes] || '').split(';').filter(Boolean).forEach(t => { themeCounts[t] = (themeCounts[t] || 0) + 1; });
+    (a[IDX.countries] || '').split(';').filter(Boolean).forEach(c => { countryCounts[c] = (countryCounts[c] || 0) + 1; });
+    const y = (a[IDX.date] || '').slice(0, 4); if (y) yearCounts[y] = (yearCounts[y] || 0) + 1;
+  }
+
+  renderChart('chartNewspaper', npCounts, NP_COLORS);
+  renderChart('chartTheme', themeCounts, null, 15);
+  renderChart('chartCountry', countryCounts, null, 15);
+  renderChart('chartYear', yearCounts, null, 20, true);
+}
+
+function renderChart(elementId, counts, colorMap, limit, sortAsc) {
+  const container = document.getElementById(elementId);
+  let entries = Object.entries(counts).filter(([k, v]) => k);
+  entries.sort((a, b) => sortAsc ? a[0].localeCompare(b[0]) : b[1] - a[1]);
+  if (limit) entries = entries.slice(0, limit);
+
+  if (entries.length === 0) {
+    container.innerHTML = '<div style="color:var(--muted);font-size:0.8rem;padding:0.5rem;">暂无数据</div>';
+    return;
+  }
+
+  const maxVal = Math.max(...entries.map(e => e[1]));
+  const colors = ['#3b82f6','#ec4899','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#f97316','#6366f1','#84cc16'];
+
+  container.innerHTML = entries.map(([label, count], i) => {
+    const pct = (count / maxVal * 100).toFixed(1);
+    const color = colorMap ? (colorMap[label] || '#6b7280') : colors[i % colors.length];
+    return `<div class="chart-bar-item">
+      <div class="chart-bar-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${pct}%;background:${color};"></div></div>
+      <div class="chart-bar-value">${count.toLocaleString()}</div>
+    </div>`;
+  }).join('');
+}
+
+// ============ Export ============
+function exportFiltered() {
+  const headers = ['标题', 'URL', '日期', '版面', '作者', '摘要', '涉及国家', '主题分类', '正文字数', '采集状态', '报刊名称', '自定义主题'];
+  const rows = filteredIdx.map(idx => {
+    const a = ARTICLES[idx];
+    const url = a[IDX.url];
+    const ctNames = (articleThemes[url] || []).map(tid => {
+      const t = customThemes.find(x => x.id === tid);
+      return t ? t.name : '';
+    }).filter(Boolean).join('; ');
+    return [...a, ctNames];
+  });
+
+  const csv = '\uFEFF' + headers.join(',') + '\n' + rows.map(row =>
+    row.map(cell => {
+      const s = String(cell || '').replace(/"/g, '""');
+      return s.includes(',') || s.includes('\n') || s.includes('"') ? `"${s}"` : s;
+    }).join(',')
+  ).join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `四大报刊数据库_筛选结果_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ============ Utilities ============
+function escapeHtml(text) {
+  if (text === null || text === undefined) return '';
+  const div = document.createElement('div');
+  div.textContent = String(text);
+  return div.innerHTML;
+}
+
+// Close modal on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
+
+// Initialize when data is loaded
+if (typeof ARTICLES !== 'undefined') {
+  init();
+} else {
+  // Fallback: wait for data.js to load
+  window.addEventListener('load', () => {
+    if (typeof ARTICLES !== 'undefined') init();
+    else document.getElementById('loadingScreen').innerHTML = '<h2>数据加载失败</h2><p>请确保 data.js 文件与 database.html 在同一目录</p>';
+  });
+}
+</script>
+</body>
+</html>
