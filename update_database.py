@@ -5,8 +5,19 @@
 ==============================
 定期抓取4份电子报刊的最新内容，增量更新到数据库中。
 
+注意：本脚本不生成 data.js 文件。
+网站前端直接加载 articles.jsonl，因此 data.js 不再需要。
+
 使用方法：
   python3 update_database.py
+
+CI 模式（GitHub Actions 自动使用，无需手动指定）：
+  在 GitHub Actions 环境中，脚本会自动启用 CI 模式：
+  - 超时时间缩短为 8 秒（本地 25 秒）
+  - 不重试（本地 2 次重试）
+  - 爬取范围缩小为最近 2 天（本地 14 天）
+  - 全局时间限制 4 分钟，超时后立即停止
+  - 即使所有网站无法访问，也正常退出（exit 0）
 
 支持的四份报刊：
   1. 国际出版周报 (yeeipw.cpmj.com.cn)
@@ -17,6 +28,7 @@
 
 import os
 import re
+import sys
 import json
 import time
 import random
@@ -28,12 +40,42 @@ from urllib.parse import urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ============================ CI 模式检测 ============================
+CI_MODE = os.environ.get("CI", "").lower() in ("true", "1", "yes") or \
+          os.environ.get("GITHUB_ACTIONS", "").lower() in ("true", "1", "yes")
+
+if CI_MODE:
+    print("[CI 模式] 检测到 GitHub Actions 环境，启用快速更新模式", flush=True)
+    TIMEOUT = 8         # CI 模式：8 秒超时（本地 25 秒）
+    MAX_RETRY = 0       # CI 模式：不重试（本地 2 次重试）
+    CRAWL_DAYS = 2      # CI 模式：只检查最近 2 天（本地 14 天）
+    DELAY_MIN, DELAY_MAX = 0.05, 0.15  # CI 模式：极短间隔
+    MAX_CRAWL_TIME = 240  # CI 模式：全局爬取时间限制 4 分钟
+    MAX_NODES = 3       # CI 模式：最多 3 个版面
+else:
+    TIMEOUT = 25
+    MAX_RETRY = 2
+    CRAWL_DAYS = 14
+    DELAY_MIN, DELAY_MAX = 0.3, 0.8
+    MAX_CRAWL_TIME = 3600  # 本地：1 小时
+    MAX_NODES = 50
+
+# ============================ 全局时间控制 ============================
+START_TIME = time.time()
+
+def time_remaining():
+    """返回剩余可用时间（秒），如果已超时返回 0"""
+    elapsed = time.time() - START_TIME
+    return max(0, MAX_CRAWL_TIME - elapsed)
+
+def should_stop():
+    """检查是否应该停止爬取"""
+    return time_remaining() <= 0
+
 # ============================ 配置 ============================
-# 自动检测脚本所在目录作为数据目录（无需手动修改路径）
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = SCRIPT_DIR
 JSONL_PATH = os.path.join(DATA_DIR, "articles.jsonl")
-DATA_JS_PATH = os.path.join(DATA_DIR, "data.js")
 SEEN_URLS_PATH = os.path.join(DATA_DIR, "seen_urls.json")
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -46,27 +88,37 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
-DELAY_MIN, DELAY_MAX = 0.3, 0.8
-TIMEOUT = 25
-MAX_RETRY = 2
-
 # ============================ HTTP工具 ============================
 def fetch(url, binary=False):
-    for attempt in range(MAX_RETRY + 1):
+    """带超时的HTTP请求，超时或错误返回None"""
+    try:
+        r = SESSION.get(url, verify=False, timeout=TIMEOUT)
+        if r.status_code == 200:
+            result = r.content if binary else r.text
+            r.close()
+            return result
+        r.close()
+        if r.status_code in (404, 410):
+            return None
+    except Exception:
+        pass
+    # 重试（CI模式MAX_RETRY=0，不重试）
+    for attempt in range(MAX_RETRY):
         try:
             r = SESSION.get(url, verify=False, timeout=TIMEOUT)
             if r.status_code == 200:
-                return r.content if binary else r.text
-            if r.status_code in (404, 410):
-                return None
-        except requests.RequestException:
-            if attempt == MAX_RETRY:
-                return None
-            time.sleep(1.5)
+                result = r.content if binary else r.text
+                r.close()
+                return result
+            r.close()
+        except Exception:
+            pass
+        time.sleep(1)
     return None
 
 def polite_sleep():
-    time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
+    t = random.uniform(DELAY_MIN, DELAY_MAX)
+    time.sleep(t)
 
 def decode_response(resp):
     raw = resp.content
@@ -81,7 +133,17 @@ def decode_response(resp):
         return raw.decode("utf-8", errors="replace")
 
 def fetch_auto(url):
-    for attempt in range(MAX_RETRY + 1):
+    """带解码的HTTP请求，超时或错误返回None"""
+    try:
+        r = SESSION.get(url, verify=False, timeout=TIMEOUT)
+        if r.status_code == 200:
+            text = decode_response(r)
+            r.close()
+            return text
+        r.close()
+    except Exception:
+        pass
+    for attempt in range(MAX_RETRY):
         try:
             r = SESSION.get(url, verify=False, timeout=TIMEOUT)
             if r.status_code == 200:
@@ -89,12 +151,9 @@ def fetch_auto(url):
                 r.close()
                 return text
             r.close()
-            if r.status_code in (404, 410):
-                return None
-        except requests.RequestException:
-            if attempt == MAX_RETRY:
-                return None
-            time.sleep(1.5)
+        except Exception:
+            pass
+        time.sleep(1)
     return None
 
 # ============================ 分类工具 ============================
@@ -153,102 +212,104 @@ def is_non_article(title):
 
 def crawl_ipw(existing_urls):
     """国际出版周报 - 抓取最新期次"""
-    print("\n[国际出版周报] 开始抓取...")
+    print("\n[国际出版周报] 开始抓取...", flush=True)
     articles = []
     base = "http://yeeipw.cpmj.com.cn"
-    
-    # 获取当前月份和上个月
+
     now = datetime.now()
-    for offset in range(0, 3):  # 检查最近3个月
-        d = now - timedelta(days=offset * 30)
+    check_days = CRAWL_DAYS if CI_MODE else 90
+
+    for offset in range(0, check_days):
+        if should_stop():
+            print(f"  时间到，停止抓取（已检查 {offset} 天）", flush=True)
+            break
+
+        d = now - timedelta(days=offset)
         ym = d.strftime("%Y-%m")
-        
-        # 尝试每一天的node页面
-        for day in range(1, 32):
-            url = f"{base}/html/{ym}/{day:02d}/node_142567.htm"
-            html = fetch_auto(url)
-            if not html or len(html) < 500:
-                continue
-            
-            soup = BeautifulSoup(html, "html.parser")
-            # 找文章链接
-            for a in soup.find_all("a", href=True):
-                if "content_" in a["href"]:
-                    art_url = urljoin(url, a["href"])
-                    if art_url in existing_urls:
-                        continue
-                    
-                    title = a.get_text(strip=True)
-                    if is_non_article(title):
-                        continue
-                    
-                    # 提取日期
-                    date_match = re.search(r'/(\d{4}-\d{2})/(\d{2})/', art_url)
-                    date = f"{date_match.group(1)}-{date_match.group(2)}" if date_match else ""
-                    
-                    # 获取正文
-                    polite_sleep()
-                    art_html = fetch_auto(art_url)
-                    full_text = ""
-                    if art_html:
-                        art_soup = BeautifulSoup(art_html, "html.parser")
-                        content_div = art_soup.find("div", class_="content") or art_soup.find("div", id="content")
-                        if content_div:
-                            full_text = content_div.get_text(strip=True)
-                    
-                    articles.append({
-                        'title': title, 'url': art_url, 'date': date,
-                        'section': '', 'author': '',
-                        'summary': full_text[:100] if full_text else '',
-                        'countries': extract_countries(title),
-                        'themes': classify_themes(title, full_text[:200], ''),
-                        'content_length': str(len(full_text)),
-                        'status': '已采集' if full_text else '已采集',
-                        'newspaper': '国际出版周报'
-                    })
-                    existing_urls.add(art_url)
-            
-            if len(html) > 500:
+        day = d.day
+
+        url = f"{base}/html/{ym}/{day:02d}/node_142567.htm"
+        html = fetch_auto(url)
+        if not html or len(html) < 500:
+            continue
+
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            if should_stop():
+                break
+            if "content_" in a["href"]:
+                art_url = urljoin(url, a["href"])
+                if art_url in existing_urls:
+                    continue
+
+                title = a.get_text(strip=True)
+                if is_non_article(title):
+                    continue
+
+                date_match = re.search(r'/(\d{4}-\d{2})/(\d{2})/', art_url)
+                date = f"{date_match.group(1)}-{date_match.group(2)}" if date_match else ""
+
                 polite_sleep()
-    
-    print(f"  新增 {len(articles)} 篇")
+                art_html = fetch_auto(art_url)
+                full_text = ""
+                if art_html:
+                    art_soup = BeautifulSoup(art_html, "html.parser")
+                    content_div = art_soup.find("div", class_="content") or art_soup.find("div", id="content")
+                    if content_div:
+                        full_text = content_div.get_text(strip=True)
+
+                articles.append({
+                    'title': title, 'url': art_url, 'date': date,
+                    'section': '', 'author': '',
+                    'summary': full_text[:100] if full_text else '',
+                    'countries': extract_countries(title),
+                    'themes': classify_themes(title, full_text[:200], ''),
+                    'content_length': str(len(full_text)),
+                    'status': '已采集',
+                    'newspaper': '国际出版周报'
+                })
+                existing_urls.add(art_url)
+
+        polite_sleep()
+
+    print(f"  新增 {len(articles)} 篇", flush=True)
     return articles
 
 
 def crawl_chinaxwcb(existing_urls):
     """中国新闻出版广电报 - 抓取最新期次"""
-    print("\n[中国新闻出版广电报] 开始抓取...")
+    print("\n[中国新闻出版广电报] 开始抓取...", flush=True)
     articles = []
     base = "https://epaper.chinaxwcb.com"
-    
+
     now = datetime.now()
-    # 只检查最近14天（减少请求量）
-    for days_ago in range(0, 14):
+    check_days = CRAWL_DAYS
+
+    for days_ago in range(0, check_days):
+        if should_stop():
+            print(f"  时间到，停止抓取（已检查 {days_ago} 天）", flush=True)
+            break
+
         d = now - timedelta(days=days_ago)
         ym = d.strftime("%Y-%m")
         dd = d.strftime("%d")
-        
-        # 获取版面列表
+
         node_url = f"{base}/app_epaper/{ym}/{dd}/node_01.html"
-        try:
-            html = fetch_auto(node_url)
-        except Exception:
-            continue
+        html = fetch_auto(node_url)
         if not html or len(html) < 500:
             continue
-        
+
         soup = BeautifulSoup(html, "html.parser")
-        
-        # 找到所有版面链接
+
         node_links = set()
         for a in soup.find_all("a", href=True):
             if "node_" in a["href"] and ".html" in a["href"]:
                 node_links.add(urljoin(node_url, a["href"]))
-        
-        node_links.add(node_url)  # 包含首页
-        
-        # 从每个版面提取文章
-        for nurl in node_links:
+        node_links.add(node_url)
+
+        for nurl in list(node_links)[:MAX_NODES]:
+            if should_stop():
+                break
             polite_sleep()
             if nurl != node_url:
                 html2 = fetch_auto(nurl)
@@ -257,25 +318,26 @@ def crawl_chinaxwcb(existing_urls):
                 soup2 = BeautifulSoup(html2, "html.parser")
             else:
                 soup2 = soup
-            
-            # 提取版面名
+
             section = ""
             title_tag = soup2.find("title")
             if title_tag:
                 sm = re.search(r"第\s*(\d+)\s*版[：:]\s*(.+)", title_tag.get_text())
                 if sm:
                     section = f"第{int(sm.group(1)):02d}版:{sm.group(2).strip()}"
-            
+
             for a in soup2.find_all("a", href=True):
+                if should_stop():
+                    break
                 if "content_" in a["href"]:
                     art_url = urljoin(nurl, a["href"])
                     if art_url in existing_urls:
                         continue
-                    
+
                     title = a.get_text(strip=True)
                     if is_non_article(title):
                         continue
-                    
+
                     polite_sleep()
                     art_html = fetch_auto(art_url)
                     full_text = ""
@@ -284,7 +346,7 @@ def crawl_chinaxwcb(existing_urls):
                         content_div = art_soup.find("div", class_="content") or art_soup.find("founder-content")
                         if content_div:
                             full_text = content_div.get_text(strip=True)
-                    
+
                     date = f"{ym}-{dd}"
                     articles.append({
                         'title': title, 'url': art_url, 'date': date,
@@ -297,113 +359,111 @@ def crawl_chinaxwcb(existing_urls):
                         'newspaper': '中国新闻出版广电报'
                     })
                     existing_urls.add(art_url)
-    
-    print(f"  新增 {len(articles)} 篇")
+
+    print(f"  新增 {len(articles)} 篇", flush=True)
     return articles
 
 
 def crawl_zhdsb(existing_urls):
-    """中华读书报 - 只抓取最新2个月的期次"""
-    print("\n[中华读书报] 开始抓取...")
+    """中华读书报 - 只抓取最新期次"""
+    print("\n[中华读书报] 开始抓取...", flush=True)
     articles = []
     base = "https://epaper.gmw.cn/zhdsb"
-    
+
     now = datetime.now()
-    # 只检查最近2个月的period.xml
-    for offset in range(0, 2):
+    months_to_check = 1 if CI_MODE else 2
+
+    for offset in range(0, months_to_check):
+        if should_stop():
+            print(f"  时间到，停止抓取", flush=True)
+            break
+
         d = now - timedelta(days=offset * 30)
         ym = d.strftime("%Y%m")
-        
+
         xml_url = f"{base}/html/layout/{ym}/period.xml"
-        try:
-            xml = fetch_auto(xml_url)
-        except Exception:
-            xml = None
+        xml = fetch_auto(xml_url)
         if not xml:
             continue
-        
-        try:
-            soup = BeautifulSoup(xml, "xml")
-        except Exception:
-            continue
+
+        # 修复：使用 html.parser 替代 xml parser，避免 lxml 依赖
+        soup = BeautifulSoup(xml, "html.parser")
         periods = soup.find_all("period")
-        
+
+        if CI_MODE:
+            periods = periods[-2:] if len(periods) > 2 else periods
+
         for p in periods:
+            if should_stop():
+                break
             try:
                 date_tag = p.find("period_date")
                 fp_tag = p.find("front_page")
                 if not date_tag:
                     continue
-                
+
                 date_str = date_tag.get_text(strip=True)
                 front = fp_tag.get_text(strip=True) if fp_tag else "node_01.html"
-                
+
                 if date_str < "2021-01-01":
                     continue
-                
+
                 dd = date_str.split("-")[-1]
                 front_url = f"{base}/html/layout/{ym}/{dd}/{front}"
-                
+
                 polite_sleep()
-                try:
-                    html = fetch_auto(front_url)
-                except Exception:
-                    continue
+                html = fetch_auto(front_url)
                 if not html:
                     continue
-                
+
                 fsoup = BeautifulSoup(html, "html.parser")
-                
-                # 找版面链接（限制最多20个版面）
+
                 node_links = set()
                 for a in fsoup.find_all("a", href=True):
                     if "node_" in a["href"] and ".html" in a["href"]:
                         node_links.add(urljoin(front_url, a["href"]))
                 node_links.add(front_url)
-                
-                # 只处理前20个版面，避免超时
-                for nurl in list(node_links)[:20]:
+
+                for nurl in list(node_links)[:MAX_NODES]:
+                    if should_stop():
+                        break
                     polite_sleep()
-                    try:
-                        if nurl != front_url:
-                            html2 = fetch_auto(nurl)
-                            if not html2:
-                                continue
-                            soup2 = BeautifulSoup(html2, "html.parser")
-                        else:
-                            soup2 = fsoup
-                    except Exception:
-                        continue
-                    
+                    if nurl != front_url:
+                        html2 = fetch_auto(nurl)
+                        if not html2:
+                            continue
+                        soup2 = BeautifulSoup(html2, "html.parser")
+                    else:
+                        soup2 = fsoup
+
                     section = ""
                     title_tag = soup2.find("title")
                     if title_tag:
                         sm = re.search(r"第\s*(\d+)\s*版[：:]\s*(.+)", title_tag.get_text())
                         if sm:
                             section = f"第{int(sm.group(1)):02d}版:{sm.group(2).strip()}"
-                    
+
                     for a in soup2.find_all("a", href=True):
+                        if should_stop():
+                            break
                         if "content_" in a["href"]:
                             art_url = urljoin(nurl, a["href"])
                             if art_url in existing_urls:
                                 continue
-                            
+
                             title = a.get_text(strip=True)
                             if is_non_article(title):
                                 continue
-                            
+
                             polite_sleep()
-                            try:
-                                art_html = fetch_auto(art_url)
-                            except Exception:
-                                art_html = None
+                            art_html = fetch_auto(art_url)
                             full_text = ""
                             if art_html:
                                 art_soup = BeautifulSoup(art_html, "html.parser")
                                 content_div = art_soup.find("div", class_="content") or art_soup.find("founder-content")
                                 if content_div:
                                     full_text = content_div.get_text(strip=True)
-                            
+
                             articles.append({
                                 'title': title, 'url': art_url, 'date': date_str,
                                 'section': section, 'author': '',
@@ -416,70 +476,71 @@ def crawl_zhdsb(existing_urls):
                             })
                             existing_urls.add(art_url)
             except Exception as e:
-                print(f"  [跳过期次] {e}")
+                print(f"  [跳过期次] {e}", flush=True)
                 continue
-    
-    print(f"  新增 {len(articles)} 篇")
+
+    print(f"  新增 {len(articles)} 篇", flush=True)
     return articles
 
 
 def crawl_wyb(existing_urls):
     """文艺报 - 抓取最新期次"""
-    print("\n[文艺报] 开始抓取...")
+    print("\n[文艺报] 开始抓取...", flush=True)
     articles = []
     base = "http://wyb.chinawriter.com.cn"
-    
-    # 获取首页找最新期
+
     html = fetch_auto(base + "/")
     if not html:
-        print("  无法访问首页")
+        print("  无法访问首页", flush=True)
         return articles
-    
+
     soup = BeautifulSoup(html, "html.parser")
-    
-    # 找到版面链接
+
     node_links = set()
     for a in soup.find_all("a", href=True):
         if "node_" in a["href"] and ".html" in a["href"]:
             node_links.add(urljoin(base + "/", a["href"]))
-    
-    print(f"  发现 {len(node_links)} 个版面")
-    
-    for nurl in node_links:
+
+    print(f"  发现 {len(node_links)} 个版面", flush=True)
+
+    for nurl in list(node_links)[:MAX_NODES]:
+        if should_stop():
+            print(f"  时间到，停止抓取", flush=True)
+            break
         polite_sleep()
         html2 = fetch_auto(nurl)
         if not html2:
             continue
         soup2 = BeautifulSoup(html2, "html.parser")
-        
+
         section = ""
         title_tag = soup2.find("title")
         if title_tag:
             sm = re.search(r"第\s*(\d+)\s*版", title_tag.get_text())
             if sm:
                 section = f"第{int(sm.group(1))}版"
-        
+
         for a in soup2.find_all("a", href=True):
+            if should_stop():
+                break
             if "content" in a["href"] and ".html" in a["href"]:
                 art_url = urljoin(nurl, a["href"])
                 if art_url in existing_urls:
                     continue
-                
+
                 title = a.get_text(strip=True)
                 if is_non_article(title):
                     continue
-                
-                # 提取日期
+
                 date_match = re.search(r'/(\d{6})/', art_url)
                 date = ""
                 if date_match:
                     ym = date_match.group(1)
                     date = f"{ym[:4]}-{ym[4:6]}"
-                    # 从URL中提取日期
                     dm2 = re.search(r'/(\d{6})/(\d{2})/', art_url)
                     if dm2:
                         date = f"{ym[:4]}-{ym[4:6]}-{dm2.group(2)}"
-                
+
                 polite_sleep()
                 art_html = fetch_auto(art_url)
                 full_text = ""
@@ -488,7 +549,7 @@ def crawl_wyb(existing_urls):
                     content_div = art_soup.find("div", class_="content") or art_soup.find("div", class_="article-content")
                     if content_div:
                         full_text = content_div.get_text(strip=True)
-                
+
                 articles.append({
                     'title': title, 'url': art_url, 'date': date,
                     'section': section, 'author': '',
@@ -500,154 +561,88 @@ def crawl_wyb(existing_urls):
                     'newspaper': '文艺报'
                 })
                 existing_urls.add(art_url)
-    
-    print(f"  新增 {len(articles)} 篇")
+
+    print(f"  新增 {len(articles)} 篇", flush=True)
     return articles
 
 
 # ============================ 主流程 ============================
 def load_seen_urls():
     if os.path.exists(SEEN_URLS_PATH):
-        with open(SEEN_URLS_PATH, 'r') as f:
-            return set(json.load(f))
+        try:
+            with open(SEEN_URLS_PATH, 'r', encoding='utf-8') as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
     return set()
 
 def save_seen_urls(urls):
-    with open(SEEN_URLS_PATH, 'w') as f:
-        json.dump(list(urls), f)
+    with open(SEEN_URLS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(list(urls), f, ensure_ascii=False)
 
 def append_to_jsonl(articles):
     with open(JSONL_PATH, 'a', encoding='utf-8') as f:
         for a in articles:
             f.write(json.dumps(a, ensure_ascii=False, separators=(',',':')) + '\n')
 
-def regenerate_data_js():
-    """从JSONL重新生成data.js"""
-    print("\n重新生成data.js...")
-    
-    articles = []
-    seen = set()
-    with open(JSONL_PATH, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            a = json.loads(line)
-            url = a.get('url', '')
-            if url in seen:
-                continue
-            seen.add(url)
-            articles.append(a)
-    
-    with open(DATA_JS_PATH, 'w', encoding='utf-8') as out:
-        out.write("const FIELD_NAMES=['title','url','date','section','author','summary','countries','themes','content_length','status','newspaper'];\n")
-        out.write("const ARTICLES=[")
-        for i, a in enumerate(articles):
-            arr = [
-                a.get('title',''), a.get('url',''), a.get('date',''),
-                a.get('section',''), a.get('author',''), a.get('summary',''),
-                a.get('countries',''), a.get('themes',''),
-                str(a.get('content_length','0')), a.get('status',''),
-                a.get('newspaper','')
-            ]
-            if i > 0:
-                out.write(',')
-            out.write(json.dumps(arr, ensure_ascii=False, separators=(',',':')))
-        out.write("];\n")
-    
-    print(f"  data.js 完成: {len(articles)} 篇文章", flush=True)
-    
-    # 同时生成独立HTML文件（将data.js内嵌到database.html中）
-    html_template_path = os.path.join(DATA_DIR, "database.html")
-    standalone_path = os.path.join(DATA_DIR, "四大报刊数据库.html")
-    
-    if os.path.exists(html_template_path):
-        print("  生成独立HTML文件...", flush=True)
-        with open(html_template_path, 'r', encoding='utf-8') as f:
-            html = f.read()
-        
-        script_tag = '<script src="data.js"></script>'
-        pos = html.find(script_tag)
-        if pos != -1:
-            before = html[:pos]
-            after = html[pos + len(script_tag):]
-            with open(standalone_path, 'w', encoding='utf-8') as out:
-                out.write(before)
-                out.write('<script>\n')
-                with open(DATA_JS_PATH, 'r', encoding='utf-8') as js:
-                    for line in js:
-                        out.write(line)
-                out.write('</script>\n')
-                out.write(after)
-            print(f"  独立HTML已生成: {os.path.getsize(standalone_path)/1024/1024:.1f}MB", flush=True)
-    
-    return len(articles)
-
 
 def main():
-    import sys
     print("=" * 60, flush=True)
     print(f"四大报刊数据库自动更新 - {datetime.now().strftime('%Y-%m-%d %H:%M')}", flush=True)
+    if CI_MODE:
+        print(f"[CI 模式] 超时={TIMEOUT}s, 重试={MAX_RETRY}, 天数={CRAWL_DAYS}, 时间限制={MAX_CRAWL_TIME}s", flush=True)
     print("=" * 60, flush=True)
-    
+
     os.makedirs(DATA_DIR, exist_ok=True)
-    
+
     # 加载已有URL
     seen_urls = load_seen_urls()
     print(f"已有URL数: {len(seen_urls)}", flush=True)
-    
+
     # 依次抓取各报刊
     all_new = []
     import gc
-    
-    try:
-        new_articles = crawl_ipw(seen_urls)
-        all_new.extend(new_articles)
-        sys.stdout.flush()
-    except Exception as e:
-        print(f"  [国际出版周报] 错误: {e}", flush=True)
-    gc.collect()
-    
-    try:
-        new_articles = crawl_chinaxwcb(seen_urls)
-        all_new.extend(new_articles)
-        sys.stdout.flush()
-    except Exception as e:
-        print(f"  [中国新闻出版广电报] 错误: {e}", flush=True)
-    gc.collect()
-    
-    try:
-        new_articles = crawl_zhdsb(seen_urls)
-        all_new.extend(new_articles)
-        sys.stdout.flush()
-    except Exception as e:
-        print(f"  [中华读书报] 错误: {e}", flush=True)
-    gc.collect()
-    
-    try:
-        new_articles = crawl_wyb(seen_urls)
-        all_new.extend(new_articles)
-        sys.stdout.flush()
-    except Exception as e:
-        print(f"  [文艺报] 错误: {e}", flush=True)
-    gc.collect()
-    
+
+    crawlers = [
+        ("国际出版周报", crawl_ipw),
+        ("中国新闻出版广电报", crawl_chinaxwcb),
+        ("中华读书报", crawl_zhdsb),
+        ("文艺报", crawl_wyb),
+    ]
+
+    for name, crawler in crawlers:
+        try:
+            new_articles = crawler(seen_urls)
+            all_new.extend(new_articles)
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"  [{name}] 错误: {e}", flush=True)
+        gc.collect()
+
+        # 检查是否超时
+        if should_stop():
+            print(f"\n[超时] 全局时间限制已到，跳过剩余报刊", flush=True)
+            break
+
+    elapsed = int(time.time() - START_TIME)
     print(f"\n{'='*60}", flush=True)
     print(f"本次新增文章: {len(all_new)} 篇", flush=True)
-    
+    print(f"总耗时: {elapsed} 秒", flush=True)
+
     if all_new:
-        # 保存新文章
         append_to_jsonl(all_new)
         save_seen_urls(seen_urls)
-        
-        # 重新生成data.js
-        total = regenerate_data_js()
-        print(f"数据库已更新，总计 {total} 篇文章", flush=True)
+        print(f"已写入 articles.jsonl ({len(all_new)} 篇)，seen_urls.json 已更新", flush=True)
     else:
         print("无新增内容", flush=True)
-    
+        if CI_MODE:
+            print("(GitHub Actions 服务器在海外，部分中国报刊网站可能无法访问，这是正常的)", flush=True)
+
     print(f"\n更新完成: {datetime.now().strftime('%Y-%m-%d %H:%M')}", flush=True)
     print("=" * 60, flush=True)
+
+    # CI 模式下始终返回 0，避免 workflow 失败
+    sys.exit(0)
 
 
 if __name__ == "__main__":
