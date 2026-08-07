@@ -9,36 +9,50 @@ on:
 
 permissions:
   contents: write
-  pages: write
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 8
+
     steps:
     - name: 检出代码
       uses: actions/checkout@v4
-      
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
     - name: 设置 Python 环境
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-        
+
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        
+
     - name: 运行更新脚本
       run: |
         python update_database.py
-        
-    - name: 提交更新
+      continue-on-error: true
+      timeout-minutes: 5
+
+    - name: 配置 Git
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add data.js articles.jsonl seen_urls.json
-        git diff --staged --quiet || git commit -m "自动更新: $(date -u '+%Y-%m-%d %H:%M') UTC"
-        git push
+        git config http.postBuffer 524288000
+
+    - name: 提交更新
+      run: |
+        git add articles.jsonl seen_urls.json
+        if git diff --staged --quiet; then
+          echo "没有新的更新，跳过提交"
+        else
+          git commit -m "自动更新: $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git push
+        fi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
